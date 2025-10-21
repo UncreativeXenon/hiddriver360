@@ -348,14 +348,14 @@ uint8_t getIK(const uint8_t keycodes[6]) {
 uint8_t getL2P(const uint8_t modifiers) {
 	const uint8_t LSHIFT = 0x02;
 	if (modifiers & LSHIFT)
-		return 127.5;
+		return 255;
 	return 0;
 }
 
 uint8_t getR2P(const uint8_t modifiers) {
 	const uint8_t LCTRL = 0x01;
 	if (modifiers & LCTRL)
-		return 127.5;
+		return 255;
 	return 0;
 }
 
