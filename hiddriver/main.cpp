@@ -8,6 +8,10 @@
 #include <sstream>
 #include <vector>
 #include "Detours.h"
+#include <iostream>
+#include <cstdint>
+#include <vector>
+#include <algorithm>
 Detour HidAddDeviceDetour;
 Detour HidRemoveDeviceDetour;
 Detour XamInputGetStateDetour;
@@ -23,7 +27,6 @@ BOOL IsTrayOpen() {
 	HalSendSMCMessage(Input, Output);
 	return (Output[1] == 0x60);
 }
-
 
 struct usb_device_descriptor {
 	uint8_t  bLength;             // Size of this descriptor in bytes (18)
@@ -71,6 +74,7 @@ enum ControllerType {
 	UNKNOWN_DEVICE = -1,
 	SONY_DUALSENSE,
 	SONY_DUALSHOCK4,
+	HID_KEYBOARD,
 };
 
 const uint16_t SONY_VENDOR_ID = 0x054c;
@@ -135,8 +139,14 @@ struct DS4ButtonsReport : Report {
 			  uint8_t ry;
 			  uint8_t vendor_defined;
 };
-#pragma pack(pop)
 
+struct HIDKBButtonsReport {
+	uint8_t modifiers;
+	uint8_t reserved;
+	uint8_t keycodes[6];
+};
+
+#pragma pack(pop)
 
 struct deviceHandle;
 struct __declspec(align(2)) HidControllerExtension
@@ -251,6 +261,114 @@ struct Controller {
 
 Controller connectedControllers[4];
 
+int areButtonsPressed(const uint8_t keycodes[6], const std::vector<uint8_t>& buttonsToCheck) {
+	for (int i = 0; i < 6; ++i) {
+		uint8_t key = keycodes[i];
+		if (key == 0) continue; // 0 means empty slot
+
+		// Check if key is in buttonsToCheck
+		if (std::find(buttonsToCheck.begin(), buttonsToCheck.end(), key) != buttonsToCheck.end()) {
+			return 1; // found a match
+		}
+	}
+	return 0; // none found
+}
+
+int getArrowDirection(const uint8_t keycodes[6]) {
+	const uint8_t UP = 0x52;
+	const uint8_t LEFT = 0x50;
+	const uint8_t DOWN = 0x51;
+	const uint8_t RIGHT = 0x4F;
+
+	std::vector<uint8_t> tmp;
+
+	tmp.clear(); tmp.push_back(UP);
+	if (areButtonsPressed(keycodes, tmp)) return 0;
+	tmp.clear(); tmp.push_back(LEFT);
+	if (areButtonsPressed(keycodes, tmp)) return 6;
+	tmp.clear(); tmp.push_back(DOWN);
+	if (areButtonsPressed(keycodes, tmp)) return 4;
+	tmp.clear(); tmp.push_back(RIGHT);
+	if (areButtonsPressed(keycodes, tmp)) return 2;
+	return 8;
+}
+
+uint8_t getAD(const uint8_t keycodes[6]) {
+	const uint8_t A = 0x04;
+	const uint8_t D = 0x07;
+
+	std::vector<uint8_t> tmp;
+
+	tmp.clear(); tmp.push_back(A);
+	if (areButtonsPressed(keycodes, tmp)) return 0;
+	tmp.clear(); tmp.push_back(D);
+	if (areButtonsPressed(keycodes, tmp)) return 255;
+	return 128;
+}
+
+uint8_t getWS(const uint8_t keycodes[6]) {
+	const uint8_t W = 0x1A;
+	const uint8_t S = 0x16;
+
+	std::vector<uint8_t> tmp;
+
+	tmp.clear(); tmp.push_back(W);
+	if (areButtonsPressed(keycodes, tmp)) return 0;
+	tmp.clear(); tmp.push_back(S);
+	if (areButtonsPressed(keycodes, tmp)) return 255;
+	return 127;
+}
+
+uint8_t getJL(const uint8_t keycodes[6]) {
+	const uint8_t J = 0x0D;
+	const uint8_t L = 0x0F;
+
+	std::vector<uint8_t> tmp;
+
+	tmp.clear(); tmp.push_back(J);
+	if (areButtonsPressed(keycodes, tmp)) return 0;
+	tmp.clear(); tmp.push_back(L);
+	if (areButtonsPressed(keycodes, tmp)) return 255;
+	return 128;
+}
+
+uint8_t getIK(const uint8_t keycodes[6]) {
+	const uint8_t I = 0x0C;
+	const uint8_t K = 0x0E;
+
+	std::vector<uint8_t> tmp;
+
+	tmp.clear(); tmp.push_back(I);
+	if (areButtonsPressed(keycodes, tmp)) return 0;
+	tmp.clear(); tmp.push_back(K);
+	if (areButtonsPressed(keycodes, tmp)) return 255;
+	return 127;
+}
+
+uint8_t getL2P(const uint8_t modifiers) {
+	const uint8_t LSHIFT = 0x02;
+	if (modifiers & LSHIFT)
+		return 127.5;
+	return 0;
+}
+
+uint8_t getR2P(const uint8_t modifiers) {
+	const uint8_t LCTRL = 0x01;
+	if (modifiers & LCTRL)
+		return 127.5;
+	return 0;
+}
+
+uint8_t getL3P(const uint8_t modifiers) {
+	const uint8_t LALT = 0x04;
+	return (modifiers & LALT);
+}
+
+uint8_t getR3P(const uint8_t modifiers) {
+	const uint8_t RALT = 0x40;
+	return (modifiers & RALT);
+}
+
 int interruptHandler(DWORD deviceHandle, int32_t a2) {
 	HidControllerExtension* driverExtension = (HidControllerExtension*)((deviceHandle - 4));
 	Report* report = (Report*)driverExtension->interruptData;
@@ -264,7 +382,8 @@ int interruptHandler(DWORD deviceHandle, int32_t a2) {
 			break;
 		}
 	}
-
+	
+	if (connectedControllers[index].controllerType != HID_KEYBOARD) {
 	if (report->reportId == 1) {
 		ButtonsReport buttonReport = ButtonsReport();
 
@@ -295,6 +414,39 @@ int interruptHandler(DWORD deviceHandle, int32_t a2) {
 			buttonReport.x = br->x;
 			buttonReport.y = br->y;
 			buttonReport.z = br->z;
+			break;
+		}
+
+		connectedControllers[index].currentState = buttonReport;
+	}
+	}
+	else {
+		ButtonsReport buttonReport = ButtonsReport();
+
+		switch (connectedControllers[index].controllerType) {
+		case HID_KEYBOARD:
+			HIDKBButtonsReport* br = (HIDKBButtonsReport*)report;
+			buttonReport.circle = areButtonsPressed(br->keycodes, std::vector<uint8_t>(1, 0x1B));
+			buttonReport.create = areButtonsPressed(br->keycodes, std::vector<uint8_t>(1, 0x2A));
+			buttonReport.cross = areButtonsPressed(br->keycodes, std::vector<uint8_t>(1, 0x1D));
+			buttonReport.hatSwitch = getArrowDirection(br->keycodes);
+			buttonReport.l1 = areButtonsPressed(br->keycodes, std::vector<uint8_t>(1, 0x14));
+			buttonReport.l2 = 0;
+			buttonReport.l3 = getL3P(br->modifiers);
+			buttonReport.options = areButtonsPressed(br->keycodes, std::vector<uint8_t>(1, 0x28));
+			buttonReport.ps = areButtonsPressed(br->keycodes, std::vector<uint8_t>(1, 0x2B));
+			buttonReport.r1 = areButtonsPressed(br->keycodes, std::vector<uint8_t>(1, 0x08));
+			buttonReport.r2 = 0;
+			buttonReport.r3 = getR3P(br->modifiers);
+			buttonReport.rx = getL2P(br->modifiers);
+			buttonReport.ry = getR2P(br->modifiers);
+			buttonReport.rz = getIK(br->keycodes);
+			buttonReport.square = areButtonsPressed(br->keycodes, std::vector<uint8_t>(1, 0x06));
+			buttonReport.touchpad = 0;
+			buttonReport.triangle = areButtonsPressed(br->keycodes, std::vector<uint8_t>(1, 0x19));
+			buttonReport.x = getAD(br->keycodes);
+			buttonReport.y = getWS(br->keycodes);
+			buttonReport.z = getJL(br->keycodes);
 			break;
 		}
 
@@ -367,6 +519,11 @@ int HidAddDeviceHook(deviceHandle* deviceHandle) {
 			controllerType = SONY_DUALSENSE;
 		if (productId == DUALSHOCK4_PRODUCT_ID || productId == DUALSHOCK4_PRODUCT_ID2)
 			controllerType = SONY_DUALSHOCK4;
+	}
+	else {
+		if (interface_descriptor->bInterfaceClass == 3 && interface_descriptor->bInterfaceProtocol == 1) {
+			controllerType = HID_KEYBOARD;
+		}
 	}
 
 	if (controllerType != UNKNOWN_DEVICE) {
