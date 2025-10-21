@@ -25,8 +25,18 @@ Experimental on-console HID driver focusing on providing third party controller 
 * DualSense (PS5 controller)
 * DualShock 4 (PS4 controller)
 * Keyboard (99% should work as most send the same HID, feel free to report by making an issue if a specific model doesn't work)
-* more to come, as its quite easy to extend
+  > **Xbox Home** - TAB  
+  > **Select** - Backspace  
+  > **Start** - Enter  
+  > **Left Analog** - WASD  
+  > **Right Analog** - IJKL  
+  > **ABXY** - ZXCV  
+  > **D-PAD** - Arrows  
+  > **L1/R1** - Q/E  
+  > **L2/R2** - Left SHIFT/Left CTRL  
+  > **L3/R3** - Left ALT/Right ALT  
 
+* more to come, as its quite easy to extend
 
 
 ## How to build
